@@ -223,6 +223,7 @@ struct dhcpv6_s46_rule {
 
 struct dhcpv6_server_cand {
 	bool has_noaddravail;
+	bool has_noprefixavail;
 	bool wants_reconfigure;
 	int16_t preference;
 	uint8_t duid_len;

@@ -794,7 +794,7 @@ static int dhcpv6_handle_advert(enum dhcpv6_msg orig, const int rc,
 {
 	uint16_t olen, otype;
 	uint8_t *odata, pref = 0;
-	struct dhcpv6_server_cand cand = {false, false, 0, 0, {0},
+	struct dhcpv6_server_cand cand = {false, false, false, 0, 0, {0},
 					DHCPV6_SOL_MAX_RT,
 					DHCPV6_INF_MAX_RT, NULL, NULL, 0, 0};
 	bool have_na = false;
@@ -848,8 +848,8 @@ static int dhcpv6_handle_advert(enum dhcpv6_msg orig, const int rc,
 		}
 	}
 
-	if ((!have_na && na_mode == IA_MODE_FORCE) ||
-			(!have_pd && pd_mode == IA_MODE_FORCE)) {
+	if ((!have_na && na_mode == IA_MODE_FORCE && pd_mode != IA_MODE_TRY) ||
+	    (!have_pd && pd_mode == IA_MODE_FORCE && na_mode != IA_MODE_TRY)) {
 		/*
 		 * RFC7083 states to process the SOL_MAX_RT and
 		 * INF_MAX_RT options even if the DHCPv6 server
@@ -868,8 +868,10 @@ static int dhcpv6_handle_advert(enum dhcpv6_msg orig, const int rc,
 	if (pd_mode != IA_MODE_NONE) {
 		if (have_pd)
 			cand.preference += 2000 + (128 - have_pd);
-		else
+		else {
+			cand.has_noprefixavail = true;
 			cand.preference -= 2000;
+		}
 	}
 
 	if (cand.duid_len > 0) {
@@ -1432,6 +1434,7 @@ int dhcpv6_promote_server_cand(void)
 	struct dhcpv6_server_cand *cand = odhcp6c_get_state(STATE_SERVER_CAND, &cand_len);
 	uint16_t hdr[2];
 	int ret = DHCPV6_STATELESS;
+	bool retry = false;
 
 	// Clear lingering candidate state info
 	odhcp6c_clear_state(STATE_SERVER_ID);
@@ -1443,7 +1446,19 @@ int dhcpv6_promote_server_cand(void)
 
 	if (cand->has_noaddravail && na_mode == IA_MODE_TRY) {
 		na_mode = IA_MODE_NONE;
+		retry = true;
+	} else
+	if (cand->has_noprefixavail && pd_mode == IA_MODE_TRY) {
+		pd_mode = IA_MODE_NONE;
+		retry = true;
+	} else
+	if ((cand->has_noaddravail && na_mode == IA_MODE_FORCE) ||
+	    (cand->has_noprefixavail && pd_mode == IA_MODE_FORCE)) {
+		ret = -1;
+		goto skip;
+	}
 
+	if (retry) {
 		dhcpv6_retx[DHCPV6_MSG_SOLICIT].max_timeo = cand->sol_max_rt;
 		dhcpv6_retx[DHCPV6_MSG_INFO_REQ].max_timeo = cand->inf_max_rt;
 
@@ -1468,6 +1483,7 @@ int dhcpv6_promote_server_cand(void)
 			ret = DHCPV6_STATEFUL;
 	}
 
+skip:
 	dhcpv6_retx[DHCPV6_MSG_SOLICIT].max_timeo = cand->sol_max_rt;
 	dhcpv6_retx[DHCPV6_MSG_INFO_REQ].max_timeo = cand->inf_max_rt;
 
